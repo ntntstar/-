@@ -1,0 +1,567 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>集中状態管理支援システム（試作版）</title>
+<!-- グラフ描画用のChart.js CDN -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+body{font-family:system-ui,"Meiryo",sans-serif;background:#f4f6fa;color:#18243a;margin:0;line-height:1.6}
+header{background:#172b4d;color:white;padding:18px}
+main{max-width:900px;margin:20px auto;padding:0 14px}
+.card{background:white;border:1px solid #dbe2ed;border-radius:12px;padding:20px;margin:14px 0}
+h1{font-size:1.25rem;margin:0}
+h2{font-size:1.2rem;margin-top:0}
+.muted{color:#637083;font-size:.9rem}
+.hidden{display:none!important}
+button{background:#3159a6;color:white;border:0;border-radius:8px;padding:10px 15px;font:inherit;cursor:pointer;margin:4px}
+button.secondary{background:#e8edf5;color:#23324a}
+button.danger{background:#9f352e}
+input,textarea{font:inherit;padding:9px;border:1px solid #b8c4d5;border-radius:7px;width:100%;box-sizing:border-box}
+label{display:block;font-weight:600;margin:10px 0 4px}
+.row{display:flex;gap:10px;flex-wrap:wrap}
+.row>*{flex:1 1 180px}
+.notice{background:#edf2ff;border: 1px solid #3159a6;border-radius:8px;padding:16px;margin:10px 0}
+.warning{background:#fff1e8;color:#7c2d12;padding:12px;border-radius:8px}
+.timer{font-size:2.4rem;font-weight:700;text-align:center}
+.choices{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:12px}
+.choices button{background:#3159a6;color:white;min-height:55px;font-weight:bold;font-size:1.1rem;border-radius:8px}
+.choices button:hover{background:#23427d}
+.scale{display:flex;flex-wrap:wrap;gap:8px}
+.scale label{flex:1 1 120px;border:1px solid #dbe2ed;border-radius:8px;padding:8px;font-weight:400}
+.scale input{width:auto}
+table{width:100%;border-collapse:collapse;font-size:.9rem}
+th,td{text-align:left;padding:8px;border-bottom:1px solid #dbe2ed}
+th{background:#f2f5fa}
+.metric{font-size:1.4rem;font-weight:700}
+.chart-container{position:relative;width:100%;height:300px;margin:20px 0}
+.condition-badge{background:#e0e8f9;color:#1d3a70;padding:6px 12px;border-radius:6px;font-weight:bold;display:inline-block;margin:6px 0}
+.amount-display{font-size:1.8rem;font-weight:bold;color:#172b4d;margin:10px 0;text-align:center;background:#fff;padding:10px;border-radius:8px;border:1px dashed #b8c4d5}
+footer{text-align:center;color:#637083;padding:20px}
+</style>
+</head>
+<body>
+<header>
+  <h1>集中状態管理支援システム</h1>
+  <div class="muted" style="color:#dce5f4">試作版 — 主観的集中度と課題遂行に基づくパフォーマンス指標を記録します</div>
+</header>
+<main>
+<section id="home" class="card">
+  <h2>利用方法</h2>
+  <p>参加者として測定するか、研究者向け試作管理画面を開いてください。</p>
+  <button onclick="show('login')">参加者として測定する</button>
+  <button class="secondary" onclick="show('admin')">研究者向け管理画面</button>
+  <div class="warning"><b>試作版：</b>データはこのブラウザー内に保存されます。複数PC間の共有、サーバー保存、安全な認証は未実装です。本番の研究データ収集には使用しないでください。</div>
+</section>
+
+<section id="login" class="card hidden">
+  <h2>参加者の確認</h2>
+  <label>参加者番号</label><input id="pid" placeholder="例：P001">
+  <label>アクセスコード</label><input id="code" placeholder="試作版では任意の文字列">
+  <p class="muted">試作版では入力値を識別情報として記録します。安全なアクセス制御は未実装です。</p>
+  <button onclick="begin()">測定を開始する</button>
+  <button class="secondary" onclick="show('home')">戻る</button>
+</section>
+
+<section id="admin" class="card hidden">
+  <h2>研究者向け管理画面（試作）</h2>
+  <p class="warning">研究者ログイン機能は未実装です。公開環境では必ず認証とアクセス制御を追加してください。</p>
+  <div class="row">
+    <div><label>実際の作業時間（分）</label><input id="workmin" type="number" min="1" max="120" value="25"></div>
+    <div><label>認知課題の時間（分）</label><input id="taskmin" type="number" min="1" max="5" value="5"></div>
+  </div>
+  <button onclick="saveSettings()">設定を保存</button>
+  <button onclick="renderAdmin()">一覧を更新</button>
+  <button onclick="csv()">CSVを書き出す</button>
+  <button class="danger" onclick="clearData()">試作データを全削除</button>
+  <div id="adminData"></div>
+  <button class="secondary" onclick="show('home')">トップへ戻る</button>
+</section>
+
+<section id="measure" class="card hidden">
+  <div class="row">
+    <div>
+      <h2 id="title">測定</h2>
+      <div id="caption" class="muted"></div>
+    </div>
+    <div>
+      <div id="timer" class="timer">05:00</div>
+      <div id="progress" class="notice" style="border:none;margin:0;padding:6px 12px;">進捗 0%</div>
+    </div>
+  </div>
+  <div id="body"></div>
+  <button class="danger" onclick="interrupt()">測定を中断して最初からやり直す</button>
+  <p class="muted">中断した測定は未完了として記録され、やり直す場合は最初から測定します。</p>
+</section>
+
+<section id="complete" class="card hidden">
+  <h2>測定が完了しました</h2>
+  <div id="results"></div>
+  <div class="card">
+    <h3>認知課題の回答時間（RT）推移</h3>
+    <p class="muted">横軸：試行（問題番号）、縦軸：回答時間（ミリ秒）</p>
+    <div class="chart-container">
+      <canvas id="rtChart"></canvas>
+    </div>
+  </div>
+  <button onclick="show('home')">トップへ戻る</button>
+  <button class="secondary" onclick="show('login')">もう一度測定する</button>
+</section>
+</main>
+<footer>集中状態管理支援システム 試作版</footer>
+
+<script>
+const KEY='focusPrototypeData', SKEY='focusPrototypeSettings';
+let session = null, interval = null, stage = '', items = [], idx = 0, responses = [], stageStart = 0, workStart = 0, targetEndTime = 0, totalDuration = 0, chartInstance = null;
+const $ = id => document.getElementById(id);
+
+function show(id) {
+  ['home','login','admin','measure','complete'].forEach(k => $(k).classList.toggle('hidden', k !== id));
+  if (id === 'admin') renderAdmin();
+}
+function data() { try { return JSON.parse(localStorage.getItem(KEY) || '[]'); } catch(e) { return []; } }
+function settings() { try { return JSON.parse(localStorage.getItem(SKEY) || '{"work":25,"task":5}'); } catch(e) { return {work:25, task:5}; } }
+
+function saveSettings() {
+  let w = Math.max(1, Math.min(120, Number($('workmin').value) || 25));
+  let t = Math.max(1, Math.min(5, Number($('taskmin').value) || 5));
+  localStorage.setItem(SKEY, JSON.stringify({work: w, task: t}));
+  $('workmin').value = w; 
+  $('taskmin').value = t;
+  alert('設定を保存しました。');
+}
+
+function begin() {
+  let p = $('pid').value.trim(), c = $('code').value.trim();
+  if (!p || !c) { alert('参加者番号とアクセスコードを入力してください。'); return; }
+  let s = settings();
+  session = {
+    id: '測定-' + Date.now(),
+    participant: p,
+    code: c,
+    status: '測定中',
+    started: new Date().toISOString(),
+    settings: s,
+    stages: {},
+    ratings: []
+  };
+  show('measure');
+  startTask('作業前');
+}
+
+function stop() {
+  if (interval) clearInterval(interval);
+  interval = null;
+}
+
+function fmt(n) {
+  n = Math.max(0, Math.ceil(n));
+  return String(Math.floor(n / 60)).padStart(2, '0') + ':' + String(n % 60).padStart(2, '0');
+}
+
+// 境界値 (x, y) の生成ルール
+function generateBoundaries(prevBoundary) {
+  let attempts = 0;
+  while (attempts < 1000) {
+    attempts++;
+    let x = 250 + Math.floor(Math.random() * 151); // 250~400
+    let y = 500 + Math.floor(Math.random() * 151); // 500~650
+    
+    let range1 = x - 100;      // 第1分類幅 (100~x未満)
+    let range2 = y - x;        // 第2分類幅 (x~y)
+    let range3 = 800 - y;      // 第3分類幅 (yより大きい~800)
+    
+    // 各分類幅が150~300円、xとyの間隔>=150円
+    if (range1 >= 150 && range1 <= 300 &&
+        range2 >= 150 && range2 <= 300 &&
+        range3 >= 150 && range3 <= 300) {
+        
+      // 直前と同じ組み合わせが連続しないようにチェック
+      if (!prevBoundary || prevBoundary.x !== x || prevBoundary.y !== y) {
+        return { x, y };
+      }
+    }
+  }
+  return { x: 300, y: 550 }; // フォールバック
+}
+
+// 指定の境界・分類区分・距離区分を満たす金額を生成
+function generateAmount(x, y, category, distanceType, prevAmount) {
+  // 距離区分: 近い (10~30円), 中程度 (40~70円), 遠い (80~120円)
+  let distMin, distMax;
+  if (distanceType === '近い') { distMin = 10; distMax = 30; }
+  else if (distanceType === '中程度') { distMin = 40; distMax = 70; }
+  else { distMin = 80; distMax = 120; } // 遠い
+
+  let candidateAmounts = [];
+
+  if (category === 1) { // 第1分類: 100 <= amt < x (基準境界: x)
+    for (let d = distMin; d <= distMax; d++) {
+      let amt = x - d;
+      if (amt >= 100 && amt < x) candidateAmounts.push(amt);
+    }
+  } else if (category === 2) { // 第2分類: x <= amt <= y (基準境界: x または y)
+    for (let d = distMin; d <= distMax; d++) {
+      let amt1 = x + d; // x側の境界より大きい
+      if (amt1 >= x && amt1 <= y) candidateAmounts.push(amt1);
+      let amt2 = y - d; // y側の境界より小さい
+      if (amt2 >= x && amt2 <= y) candidateAmounts.push(amt2);
+    }
+  } else { // 第3分類: y < amt <= 800 (基準境界: y)
+    for (let d = distMin; d <= distMax; d++) {
+      let amt = y + d;
+      if (amt > y && amt <= 800) candidateAmounts.push(amt);
+    }
+  }
+
+  // 直前と同じ金額を除外
+  let filtered = candidateAmounts.filter(a => a !== prevAmount);
+  if (filtered.length > 0) {
+    return filtered[Math.floor(Math.random() * filtered.length)];
+  } else if (candidateAmounts.length > 0) {
+    return candidateAmounts[Math.floor(Math.random() * candidateAmounts.length)];
+  }
+
+  // フォールバック生成
+  if (category === 1) return Math.max(100, x - 20);
+  if (category === 2) return Math.round((x + y) / 2);
+  return Math.min(800, y + 20);
+}
+
+// 9パターンの組み合わせの出題プールを作成・バランス考慮シャッフル
+function makeItems() {
+  let categories = [1, 2, 3];
+  let distances = ['近い', '中程度', '遠い'];
+  
+  // 9つの組み合わせのブロックを作成 (500個生成するため複数ブロック生成)
+  let baseCombo = [];
+  categories.forEach(c => {
+    distances.forEach(d => {
+      baseCombo.push({ category: c, distanceType: d });
+    });
+  });
+
+  let rawList = [];
+  while (rawList.length < 500) {
+    // 9パターンをシャッフルして追加
+    let block = [...baseCombo].sort(() => Math.random() - 0.5);
+    rawList.push(...block);
+  }
+
+  let itemsList = [];
+  let prevBoundary = null;
+  let prevAmount = null;
+
+  for (let i = 0; i < 500; i++) {
+    let combo = rawList[i];
+    let boundary = generateBoundaries(prevBoundary);
+    let amount = generateAmount(boundary.x, boundary.y, combo.category, combo.distanceType, prevAmount);
+
+    let correct = combo.category === 1 ? 'x円未満' : combo.category === 2 ? 'x円以上y円以下' : 'y円より大きい';
+
+    itemsList.push({
+      amount,
+      x: boundary.x,
+      y: boundary.y,
+      category: combo.category,
+      distanceType: combo.distanceType,
+      correct
+    });
+
+    prevBoundary = boundary;
+    prevAmount = amount;
+  }
+
+  return itemsList;
+}
+
+function startTimer(durationMinutes, onFinish) {
+  stop();
+  totalDuration = durationMinutes * 60;
+  targetEndTime = Date.now() + totalDuration * 1000;
+  
+  updateTimerDisplay();
+  interval = setInterval(() => {
+    let now = Date.now();
+    let left = (targetEndTime - now) / 1000;
+    let elapsed = totalDuration - left;
+    let pctVal = Math.min(100, Math.max(0, Math.round((elapsed / totalDuration) * 100)));
+    
+    $('timer').textContent = fmt(left);
+    $('progress').textContent = '進捗 ' + pctVal + '%';
+
+    if (left <= 0) {
+      stop();
+      onFinish();
+    }
+  }, 200);
+}
+
+function updateTimerDisplay() {
+  $('timer').textContent = fmt(totalDuration);
+  $('progress').textContent = '進捗 0%';
+}
+
+function startTask(which) {
+  stage = which;
+  idx = 0;
+  responses = [];
+  items = makeItems();
+  stageStart = performance.now();
+  $('title').textContent = which + 'の認知課題';
+  $('caption').textContent = '提示された条件に従って金額を正確に分類してください';
+  $('body').innerHTML = '<div id="task"></div>';
+  drawTask();
+  startTimer(session.settings.task, finishTask);
+}
+
+function drawTask() {
+  let q = items[idx];
+  $('task').innerHTML = `
+    <div class="notice">
+      <div style="font-size:1.1rem; font-weight:bold; color:#172b4d; margin-bottom:8px;">問題 ${idx + 1}</div>
+      
+      <!-- 提示1: 分類する金額 -->
+      <div style="background:#fff; border:2px solid #3159a6; border-radius:8px; padding:12px; margin-bottom:14px; text-align:center;">
+        <span style="font-size:0.95rem; color:#3159a6; font-weight:bold; display:block; margin-bottom:4px;">【提示1：分類する金額】</span>
+        <span style="font-size:2rem; font-weight:bold; color:#172b4d;">${q.amount} 円</span>
+      </div>
+
+      <!-- 提示2: 分類条件 -->
+      <div style="background:#f8fafc; border:1px solid #b8c4d5; border-radius:8px; padding:12px; margin-bottom:14px;">
+        <span style="font-size:0.95rem; color:#172b4d; font-weight:bold; display:block; margin-bottom:6px;">【提示2：分類条件】</span>
+        <div style="font-size:1rem; line-height:1.6; color:#23324a;">
+          境界値：<b>x = ${q.x}円</b>、<b>y = ${q.y}円</b><br>
+          <ol style="margin:6px 0 0 20px; padding:0;">
+            <li><b>${q.x}円未満</b></li>
+            <li><b>${q.x}円以上 ${q.y}円以下</b></li>
+            <li><b>${q.y}円より大きい</b></li>
+          </ol>
+        </div>
+      </div>
+
+      <div style="text-align:center; font-weight:bold; margin-bottom:8px; color:#172b4d;">該当する分類を選択してください：</div>
+      <div class="choices" style="grid-template-columns: repeat(3, 1fr);">
+        <button onclick="answer('x円未満')">1. ${q.x}円未満</button>
+        <button onclick="answer('x円以上y円以下')">2. ${q.x}円以上 ${q.y}円以下</button>
+        <button onclick="answer('y円より大きい')">3. ${q.y}円より大きい</button>
+      </div>
+    </div>
+    <p class="muted">回答は自動的に記録されます。課題は制限時間まで続きます。</p>
+  `;
+}
+
+function answer(v) {
+  let q = items[idx], now = performance.now();
+  responses.push({
+    stage,
+    question: idx + 1,
+    answer: v,
+    correct: v === q.correct,
+    x: q.x,
+    y: q.y,
+    category: q.category,
+    distanceType: q.distanceType,
+    amount: q.amount,
+    rt: Math.round(now - (responses.length ? responses[responses.length - 1].at : stageStart)),
+    at: now
+  });
+  idx++;
+  if (idx >= items.length) items.push(...makeItems());
+  drawTask();
+}
+
+function metrics(a) {
+  let c = a.filter(x => x.correct), r = c.map(x => x.rt).sort((x, y) => x - y);
+  return {
+    n: a.length,
+    correct: c.length,
+    accuracy: a.length ? c.length / a.length : null,
+    median: r.length ? (r.length % 2 ? r[(r.length - 1) / 2] : (r[r.length / 2 - 1] + r[r.length / 2]) / 2) : null
+  };
+}
+
+function finishTask() {
+  session.stages[stage] = {responses: responses.slice(), metrics: metrics(responses), ended: new Date().toISOString()};
+  if (stage === '作業前') {
+    rating('作業前認知課題の集中度', '今回の認知課題を実施している間、どの程度集中できていたと感じましたか？', () => startWork());
+  } else {
+    rating('作業後認知課題の集中度', '今回の認知課題を実施している間、どの程度集中できていたと感じましたか？', () => finishSession());
+  }
+}
+
+function rating(key, q, cb) {
+  stop();
+  $('title').textContent = key;
+  $('caption').textContent = '1〜5で回答してください';
+  $('timer').textContent = '—';
+  $('progress').textContent = '完了';
+  $('body').innerHTML = '<h3>' + q + '</h3><div class="scale">' + [1,2,3,4,5].map((n, i) => '<label><input type="radio" name="rate" value="' + n + '"> ' + n + '<br>' + ['まったく集中できなかった','あまり集中できなかった','どちらともいえない','かなり集中できた','非常によく集中できた'][i] + '</label>').join('') + '</div><label>回答の理由（任意）</label><textarea id="reason" rows="2" placeholder="例：眠気があった、課題に慣れていた"></textarea><button onclick="submitRating(\'' + key + '\')">回答して次へ</button>';
+  window.nextCb = cb;
+}
+
+function submitRating(key) {
+  let v = document.querySelector('input[name=rate]:checked');
+  if (!v) { alert('1〜5のいずれかを選んでください。'); return; }
+  session.ratings.push({item: key, value: Number(v.value), reason: $('reason').value, at: new Date().toISOString()});
+  let cb = window.nextCb;
+  window.nextCb = null;
+  cb();
+}
+
+function startWork() {
+  stage = '実際の作業';
+  workStart = Date.now();
+  $('title').textContent = '実際の作業';
+  $('caption').textContent = '設定時間が経過するまで作業してください';
+  $('body').innerHTML = '<p>普段の作業を行ってください。システムは時間を計測するだけで、作業内容や画面操作は監視しません。</p><div class="notice">設定時間：' + session.settings.work + '分</div>';
+  
+  startTimer(session.settings.work, () => {
+    session.workEnded = new Date().toISOString();
+    rating('実際の作業中の集中度', '今回の作業時間中、どの程度集中できていたと感じましたか？', () => startTask('作業後'));
+  });
+}
+
+function finishSession() {
+  session.status = '完了';
+  session.ended = new Date().toISOString();
+  localStorage.setItem(KEY, JSON.stringify([...data(), session]));
+  
+  let p = session.stages['作業前']?.metrics || {}, q = session.stages['作業後']?.metrics || {};
+  $('results').innerHTML = '<div class="row"><div class="card"><div>作業前の正答率</div><div class="metric">' + pct(p.accuracy) + '</div><div class="muted">正答数 ' + (p.correct || 0) + ' / 回答数 ' + (p.n || 0) + '</div></div><div class="card"><div>作業後の正答率</div><div class="metric">' + pct(q.accuracy) + '</div><div class="muted">正答数 ' + (q.correct || 0) + ' / 回答数 ' + (q.n || 0) + '</div></div></div><p>正答試行の回答時間中央値：作業前 ' + ms(p.median) + '、作業後 ' + ms(q.median) + '</p><p class="muted">これらは課題遂行に基づくパフォーマンス指標であり、集中状態そのものを直接測定する値ではありません。</p>';
+  
+  show('complete');
+  renderChart();
+}
+
+function renderChart() {
+  let preResp = session.stages['作業前']?.responses || [];
+  let postResp = session.stages['作業後']?.responses || [];
+  
+  let maxLen = Math.max(preResp.length, postResp.length);
+  let labels = Array.from({length: maxLen}, (_, i) => i + 1);
+  
+  let preData = preResp.map(r => r.rt);
+  let postData = postResp.map(r => r.rt);
+
+  if (chartInstance) {
+    chartInstance.destroy();
+  }
+
+  let ctx = $('rtChart').getContext('2d');
+  chartInstance = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: labels,
+      datasets: [
+        {
+          label: '作業前 回答時間 (ms)',
+          data: preData,
+          borderColor: '#3159a6',
+          backgroundColor: 'rgba(49, 89, 166, 0.1)',
+          borderWidth: 1.5,
+          pointRadius: 2,
+          tension: 0.2
+        },
+        {
+          label: '作業後 回答時間 (ms)',
+          data: postData,
+          borderColor: '#9f352e',
+          backgroundColor: 'rgba(159, 53, 46, 0.1)',
+          borderWidth: 1.5,
+          pointRadius: 2,
+          tension: 0.2
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: {
+        x: {
+          title: { display: true, text: '試行（問題番号）' }
+        },
+        y: {
+          title: { display: true, text: '回答時間 (ms)' },
+          beginAtZero: true
+        }
+      }
+    }
+  });
+}
+
+function interrupt() {
+  if (!confirm('測定を中断して未完了として記録します。最初からやり直しますか？')) return;
+  
+  stop();
+  
+  if (session) {
+    session.status = '中断';
+    session.ended = new Date().toISOString();
+    session.interruption = '参加者による中断';
+    try {
+      localStorage.setItem(KEY, JSON.stringify([...data(), session]));
+    } catch(e) {
+      console.error(e);
+    }
+    session = null;
+  }
+  
+  show('login');
+  $('pid').value = '';
+  $('code').value = '';
+  
+  alert('測定を中断しました。');
+}
+
+function pct(v) { return v == null ? '—' : Math.round(v * 100) + '%'; }
+function ms(v) { return v == null ? '—' : Math.round(v) + 'ミリ秒'; }
+
+function renderAdmin() {
+  let a = data();
+  $('adminData').innerHTML = '<p>保存件数：' + a.length + '件（完了 ' + a.filter(x => x.status === '完了').length + '件／中断 ' + a.filter(x => x.status === '中断').length + '件）</p>' + (a.length ? '<div style="overflow-x:auto"><table><tr><th>参加者番号</th><th>状態</th><th>開始日時</th><th>作業時間</th><th>作業前正答率</th><th>作業後正答率</th></tr>' + a.map(x => '<tr><td>' + esc(x.participant) + '</td><td>' + x.status + '</td><td>' + new Date(x.started).toLocaleString('ja-JP') + '</td><td>' + x.settings.work + '分</td><td>' + pct(x.stages['作業前']?.metrics?.accuracy) + '</td><td>' + pct(x.stages['作業後']?.metrics?.accuracy) + '</td></tr>').join('') + '</table></div>' : '<p class="muted">まだデータはありません。</p>');
+  $('workmin').value = settings().work;
+  $('taskmin').value = settings().task;
+}
+
+function esc(s) { return String(s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+function csv() {
+  let a = data();
+  if (!a.length) { alert('書き出すデータがありません。'); return; }
+  let rows = [['測定番号','参加者番号','状態','開始日時','終了日時','作業時間_分','作業前課題中集中度','実際の作業中集中度','作業後課題中集中度','作業前_回答数','作業前_正答率','作業前_正答試行回答時間中央値_ms','作業後_回答数','作業後_正答率','作業後_正答試行回答時間中央値_ms','質問項目','質問回答','回答理由','課題段階','問題番号','提示金額','境界x','境界y','分類カテゴリ','距離区分','課題回答','正誤','回答時間_ms']];
+  
+  a.forEach(s => {
+    let pre = s.stages['作業前']?.metrics || {}, post = s.stages['作業後']?.metrics || {};
+    let base = [
+      s.id, s.participant, s.status, s.started, s.ended || '', s.settings.work,
+      s.ratings.find(x => x.item === '作業前認知課題の集中度')?.value || '',
+      s.ratings.find(x => x.item === '実際の作業中の集中度')?.value || '',
+      s.ratings.find(x => x.item === '作業後認知課題の集中度')?.value || '',
+      pre.n || 0, pre.accuracy ?? '', pre.median ?? '',
+      post.n || 0, post.accuracy ?? '', post.median ?? ''
+    ];
+    s.ratings.forEach(r => rows.push([...base, r.item, r.value, r.reason, '', '', '', '', '', '', '', '']));
+    Object.values(s.stages).forEach(st => (st.responses || []).forEach(r => rows.push([...base, '', '', '', r.stage, r.question, r.amount ?? '', r.x ?? '', r.y ?? '', r.category ?? '', r.distanceType ?? '', r.answer, r.correct ? '正解' : '不正解', r.rt])));
+    if (!s.ratings.length) rows.push([...base, '', '', '', '', '', '', '', '', '', '', '']);
+  });
+
+  let text = '\ufeff' + rows.map(r => r.map(v => '"' + String(v ?? '').replace(/"/g, '""') + '"').join(',')).join('\r\n');
+  let blob = new Blob([text], {type: 'text/csv;charset=utf-8'});
+  let url = URL.createObjectURL(blob);
+  let aTag = document.createElement('a');
+  aTag.href = url;
+  aTag.download = '集中状態測定データ.csv';
+  aTag.click();
+  URL.revokeObjectURL(url);
+}
+
+function clearData() {
+  if (confirm('このブラウザーの試作データをすべて削除しますか？')) {
+    localStorage.removeItem(KEY);
+    renderAdmin();
+  }
+}
+</script>
+<!-- ... existing code -->
